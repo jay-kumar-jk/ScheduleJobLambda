@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Event Rule for RDS Instance Availability and Cloud Watch Alarm for ECS Service for CPU Utilization threshold reached
+
+Parameters:
+  ApplicationName:
+    Type: String
+    Description: Unique application/service name 
+    Default: EventRuleScheduleLambda
+  BucketName:
+    Type: String
+    Description: BucketName
+    Default: bucket name
+  BucketKey:
+    Type: String
+    Description: Dotnet Core lambda code key in s3 bucket
+    Default: AWSLambdaSqlConnection.zip
+  LambdaHandlerPath:  
+    Type: String
+    Description: Path of a Lambda Handler.
+    ConstraintDescription: Must end with non-numeric character.
+    Default: AWSLambdaSqlConnection::AWSLambdaSqlConnection.Function::FunctionHandler
+  DatabaseName:
+    Type: String
+    Description: Database Name
+    Default: GlobalCrossBorder
+  DatabaseSecretArn:
+    Type: String
+    Description: Database Secret Arn
+    Default: arn:aws:secretsmanager:eu-west-1:xxxxx
+  DatabaseEndpoint:
+    Type: String
+    Description: Database Endpoint
+    Default: Database Endpoint
+  Region:
+    Type: String
+    Description: Region of Database Secret Arn
+    Default: eu-west-1
+  SecurityGroupId:
+    Type: String
+    Description: Security group Id of Lambda
+    Default: sg-xxxxx 
+  Subnet1:
+    Type: String
+    Description: Subnet 1 of Lambda
+    Default: subnet-xxx
+  Subnet2:
+    Type: String
+    Description: Subnet 2 of Lambda
+    Default: subnet-xxx
+  EventScheduleExpression:
+    Type: String
+    Description: Expression to schedule event bridge rule
+    Default: cron(35 9 * * ? *)
+	
+Resources:
+          
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: lambda-function-invoke-rule-${ApplicationName}
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+            - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSLambdaExecute
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+  
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: lambda-function-${ApplicationName}
+      Description: !Sub "Lambda Function of dotnetcore3 to check RDS connectivity - ${ApplicationName}"
+      Runtime: dotnetcore3.1
+      Code:
+        S3Bucket: !Ref BucketName
+        S3Key: !Ref BucketKey
+      Handler: !Ref LambdaHandlerPath
+      MemorySize: 128
+      Timeout: 30
+      Role:
+        Fn::GetAtt:
+          - LambdaRole
+          - Arn
+      Environment:
+        Variables:
+          DATABASE: !Ref DatabaseName
+          DBSECRETARN: !Ref DatabaseSecretArn
+          DB_ENDPOINT: !Ref DatabaseEndpoint
+          REGION: !Ref Region
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+        SubnetIds:
+          - !Ref Subnet1
+          - !Ref Subnet2
+		  
+  ScheduleInvokeLambdaEventRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: !Sub "Rule for scheduling to invoke lambda function-${ApplicationName}"
+      EventBusName: 'default'
+      Name:
+        Fn::Sub: Schedule-Job-${ApplicationName}
+      ScheduleExpression: !Ref EventScheduleExpression
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "LambdaFunction"
+              - "Arn"
+          Id: 
+            Fn::Sub: Schedule-Job-${ApplicationName}
+            
+  PermissionToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Ref: "LambdaFunction"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: 
+        Fn::GetAtt: 
+          - "ScheduleInvokeLambdaEventRule"
+          - "Arn"
